@@ -19,7 +19,14 @@ const app = express();
 app.set("trust proxy", 1);
 
 // ✅ Seguridad básica headers
-app.use(helmet());
+app.use(helmet({
+    // ✅ HSTS: fuerza HTTPS (solo si tu API ya está 100% en HTTPS)
+    hsts: { maxAge: 31536000, includeSubDomains: true, preload: false },
+
+    // ❗️Si tu API devuelve imágenes base64 o cosas "raras", esto normalmente NO afecta.
+    // Pero CSP puede romper frontends si lo haces muy estricto; para APIs suele estar OK desactivarlo.
+    contentSecurityPolicy: false,
+  }));
 
 // ✅ Body limit (ajústalo: 700kb suele ir bien para firmas PNG de canvas)
 app.use(express.json({ limit: process.env.JSON_LIMIT || "700kb" }));
@@ -78,7 +85,7 @@ function requireSignatureToken(req, res, next) {
 // Health check
 app.get("/health", (req, res) => res.json({ ok: true }));
 
-app.use(requireSignatureToken);
+app.use(requireSignatureToken); 
 
 
 // Endpoint protegido
