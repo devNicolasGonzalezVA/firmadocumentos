@@ -105,7 +105,9 @@ app.post(
       return res.json({ success: true, message: "Firma enviada correctamente" });
     } catch (err) {
       console.error(err);
-      return res.status(500).json({ success: false, message: "Error al enviar la firma" });
+      return res.status(500).json({
+    success: false,
+    message: err?.message || "Server error"});
     }
   }
 );
