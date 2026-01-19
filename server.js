@@ -85,9 +85,6 @@ function requireSignatureToken(req, res, next) {
 // Health check
 app.get("/health", (req, res) => res.json({ ok: true }));
 
-app.use(requireSignatureToken); 
-
-
 // Endpoint protegido
 app.post(
   "/send-signature",
@@ -112,6 +109,18 @@ app.post(
     }
   }
 );
+
+app.use((err, req, res, next) => {
+  // Errores típicos de CORS que tú mismo generas
+  if (err?.message?.startsWith("CORS")) {
+    return res.status(403).json({ success: false, message: err.message });
+  }
+  if (err?.message === "CORS not configured") {
+    return res.status(500).json({ success: false, message: "ALLOWED_ORIGINS no configurado en el servidor" });
+  }
+  console.error("UNHANDLED ERROR:", err);
+  return res.status(500).json({ success: false, message: "Server error" });
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
