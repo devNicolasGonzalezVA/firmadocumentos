@@ -78,6 +78,9 @@ function requireSignatureToken(req, res, next) {
 // Health check
 app.get("/health", (req, res) => res.json({ ok: true }));
 
+app.use(requireSignatureToken);
+
+
 // Endpoint protegido
 app.post(
   "/send-signature",
