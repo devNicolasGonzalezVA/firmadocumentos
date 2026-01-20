@@ -17,6 +17,8 @@ export function validatePayloadStrict({ name, signature }) {
   // Tamaño real del archivo (aprox)
   // 4 chars base64 ~ 3 bytes
   const approxBytes = Math.floor((base64.length * 3) / 4);
+  const minBytes = Number(process.env.SIGNATURE_MIN_BYTES || 2500);
+if (approxBytes < minBytes) return "Firma vacía o demasiado pequeña";
 
   const maxBytes = Number(process.env.SIGNATURE_MAX_BYTES || 250000); // 250KB por defecto
   if (approxBytes > maxBytes) return "Firma demasiado grande";
