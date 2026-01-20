@@ -51,6 +51,12 @@ const corsOptions = {
   optionsSuccessStatus: 204,
 };
 
+app.use((req,res,next)=>{
+  console.log("Origin:", req.headers.origin);
+  console.log("Token:", req.headers["x-signature-token"] ? "YES" : "NO");
+  next();
+});
+
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
