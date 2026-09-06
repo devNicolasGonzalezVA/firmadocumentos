@@ -67,6 +67,7 @@ function resolveEmailTo(tenant) {
     throw new Error(`Tenant "${tenant.id}": "emailToEnv" inválido (${envName})`);
   }
 
+  const declarada = Object.prototype.hasOwnProperty.call(process.env, envName);
   let value = (process.env[envName] || "").trim();
 
   if (!value && isDev() && envName !== "EMAIL_TO") {
@@ -81,7 +82,9 @@ function resolveEmailTo(tenant) {
 
   if (!value) {
     throw new Error(
-      `Tenant "${tenant.id}": correo destino no configurado. Define ${envName} en el entorno.`
+      declarada
+        ? `Tenant "${tenant.id}": ${envName} existe en el entorno pero está vacía.`
+        : `Tenant "${tenant.id}": correo destino no configurado. Define ${envName} en el entorno.`
     );
   }
   if (!looksLikeEmail(value)) {
@@ -144,9 +147,27 @@ function build() {
   return map;
 }
 
+function tenantEnvVarsPresentes() {
+  return Object.keys(process.env)
+    .filter(k => k.startsWith(ENV_PREFIX) && k.endsWith(ENV_SUFFIX))
+    .sort();
+}
+
 // ✅ Se llama una sola vez, al arrancar, ANTES de abrir el puerto.
 export function initTenants() {
-  byOrigin = build();
+  try {
+    byOrigin = build();
+  } catch (err) {
+    const presentes = tenantEnvVarsPresentes();
+    console.error("❌ No se pudo cargar la configuración de tenants.");
+    console.error("   Motivo:", err.message);
+    console.error("   NODE_ENV:", JSON.stringify(process.env.NODE_ENV ?? null), `-> modo ${currentMode()}`);
+    console.error("   Variables TENANT_*_EMAIL_TO que ve el proceso:",
+      presentes.length ? presentes.join(", ") : "(NINGUNA)");
+    console.error("   EMAIL_TO definida:", process.env.EMAIL_TO ? "sí" : "no");
+    console.error("   Total de variables de entorno visibles:", Object.keys(process.env).length);
+    throw err; // ❗️seguimos sin arrancar: el diagnóstico no relaja el fail fast
+  }
   const ids = [...new Set([...byOrigin.values()].map(t => t.id))];
   console.log(`✅ Tenants cargados en modo ${currentMode()} (${ids.length}):`, ids.join(", "));
   return byOrigin;
