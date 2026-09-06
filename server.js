@@ -3,14 +3,23 @@ dotenv.config();
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import slowDown from "express-slow-down";
 
 import { sendSignatureEmail } from "./utils/mailer.js";
 import { validatePayloadStrict } from "./utils/validators.js";
+import {
+  initTenants,
+  getTenantByOrigin,
+  allowedOrigins as tenantOrigins,
+  normalizeOrigin,
+  currentMode,
+} from "./utils/tenants.js";
 
-
-
+// ✅ Config de tenants ANTES de construir el app: si el mapeo está mal
+// (JSON inválido, origen duplicado, correo sin configurar) el proceso muere
+// aquí y App Runner conserva la versión anterior en producción.
+initTenants();
 
 const app = express();
 
@@ -31,19 +40,28 @@ app.use(helmet({
 // ✅ Body limit (ajústalo: 700kb suele ir bien para firmas PNG de canvas)
 app.use(express.json({ limit: process.env.JSON_LIMIT || "700kb" }));
 
-// ✅ CORS estricto (solo dominios permitidos)
-const allowedOrigins = new Set(
-  (process.env.ALLOWED_ORIGINS || "")
+// ✅ CORS estricto. La fuente de verdad es config/tenants.json: agregar un tenant
+// habilita su CORS solo. ALLOWED_ORIGINS queda como aditivo opcional (herramientas,
+// entornos de prueba) — puede quedar vacío.
+const allowedOrigins = new Set([
+  ...tenantOrigins(),
+  ...(process.env.ALLOWED_ORIGINS || "")
     .split(",")
-    .map(s => s.trim())
-    .filter(Boolean)
-);
+    .map(normalizeOrigin)
+    .filter(Boolean),
+]);
 
 const corsOptions = {
   origin: (origin, cb) => {
-    if (!origin) return cb(null, true); // curl/postman/healthchecks
-    if (allowedOrigins.size === 0) return cb(new Error("CORS not configured"), false);
-    if (allowedOrigins.has(origin)) return cb(null, true);
+    // curl/postman/healthchecks: los deja pasar el CORS, pero /send-signature
+    // igual los rechaza en resolveTenant por no tener Origin.
+    if (!origin) return cb(null, true);
+
+    // ✅ Mismo criterio que resolveTenant (barra final, mayúsculas): si las dos
+    // capas normalizaran distinto, un Origin podría pasar una y morir en la otra.
+    if (allowedOrigins.has(normalizeOrigin(origin))) return cb(null, true);
+
+    console.warn("⛔ CORS bloqueó el Origin:", origin);
     return cb(new Error(`CORS blocked: ${origin}`), false);
   },
   methods: ["GET", "POST", "OPTIONS"],
@@ -51,19 +69,35 @@ const corsOptions = {
   optionsSuccessStatus: 204,
 };
 
-app.use((req,res,next)=>{
-  console.log("Origin:", req.headers.origin);
-  console.log("Token:", req.headers["x-signature-token"] ? "YES" : "NO");
-  next();
-});
-
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
+
+// ✅ Quién recibe esta firma. El Origin lo pone el navegador y el cliente no puede
+// falsificarlo desde la página; un curl sí, pero solo puede elegir entre los origins
+// ya configurados — nunca un destino nuevo.
+function resolveTenant(req, res, next) {
+  const tenant = getTenantByOrigin(req.headers.origin);
+
+  if (!tenant) {
+    console.warn("⛔ Firma rechazada. Origin no reconocido:", req.headers.origin || "(ausente)");
+    return res.status(403).json({ success: false, message: "Origen no autorizado" });
+  }
+
+  req.tenant = tenant;
+  next();
+}
+
+// ✅ Cuotas por tenant + IP: un subdominio con mucho tráfico no consume la cuota de
+// otro cuando comparten IP de salida (oficina, VPN corporativa).
+// ⚠️ express-rate-limit v8 exige envolver la IP con ipKeyGenerator en cualquier
+// keyGenerator propio, o falla con IPv6.
+const tenantIpKey = (req) => `${req.tenant?.id || "sin-tenant"}:${ipKeyGenerator(req.ip)}`;
 
 // ✅ Anti-spam: rate limit
 const sendSignatureLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
-  max: Number(process.env.RATE_LIMIT_MAX || 10), // 10 envíos por IP / 15 min
+  max: Number(process.env.RATE_LIMIT_MAX || 10), // 10 envíos por tenant+IP / 15 min
+  keyGenerator: tenantIpKey,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: "Demasiados intentos. Intenta más tarde." },
@@ -74,6 +108,7 @@ const sendSignatureSpeedLimiter = slowDown({
   windowMs: 15 * 60 * 1000,
   delayAfter: Number(process.env.SLOWDOWN_AFTER || 5),
   delayMs: () => Number(process.env.SLOWDOWN_DELAY_MS || 800), // 0.8s extra por request
+  keyGenerator: tenantIpKey,
 });
 
 // ✅ (Opcional) Token secreto anti-bot
@@ -95,6 +130,7 @@ app.get("/health", (req, res) => res.json({ ok: true }));
 app.post(
   "/send-signature",
   requireSignatureToken,
+  resolveTenant,
   sendSignatureLimiter,
   sendSignatureSpeedLimiter,
   async (req, res) => {
@@ -106,14 +142,19 @@ app.post(
 
       const timestamp = new Date().toLocaleString("es-CO");
 
-      await sendSignatureEmail({ name, idNumber, signature, timestamp });
+      await sendSignatureEmail({ name, idNumber, signature, timestamp, tenant: req.tenant });
+
+      console.log(`✉️  Firma enviada. Tenant: ${req.tenant.id} (${req.tenant.label})`);
 
       return res.json({ success: true, message: "Firma enviada correctamente" });
     } catch (err) {
-      console.error(err);
+      // ❗️El detalle queda en el log, no en la respuesta: err.message puede traer
+      // el correo destino o el nombre de una variable de entorno.
+      console.error(`ERROR enviando firma. Tenant: ${req.tenant?.id || "?"} —`, err);
       return res.status(500).json({
-    success: false,
-    message: err?.message || "Server error"});
+        success: false,
+        message: "No se pudo enviar la firma. Intenta más tarde.",
+      });
     }
   }
 );
@@ -123,14 +164,11 @@ app.use((err, req, res, next) => {
   if (err?.message?.startsWith("CORS")) {
     return res.status(403).json({ success: false, message: err.message });
   }
-  if (err?.message === "CORS not configured") {
-    return res.status(500).json({ success: false, message: "ALLOWED_ORIGINS no configurado en el servidor" });
-  }
   console.error("UNHANDLED ERROR:", err);
   return res.status(500).json({ success: false, message: "Server error" });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("Server running on port", PORT);
+  console.log(`Server running on port ${PORT} — modo ${currentMode()}`);
 });

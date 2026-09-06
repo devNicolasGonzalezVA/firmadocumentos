@@ -1,0 +1,37 @@
+{
+  "_doc": [
+    "Mapa de subdominio -> destino de correo. Este archivo SÍ va a git.",
+    "Los correos NO se escriben aquí: cada tenant declara el NOMBRE de la variable",
+    "de entorno que contiene su destino ('emailToEnv'). Si se omite, se deriva como",
+    "TENANT_<ID>_EMAIL_TO. Aqui se nombran explicitamente por cliente (Cliente A ->",
+    "TENANT_A_EMAIL_TO) para que el correo no quede atado al nombre del subdominio.",
+    "El valor real vive en App Runner (prod) o en .env (local).",
+    "Un tenant con un campo 'emailTo' literal hace que el servidor NO arranque.",
+    "Para dar de alta un subdominio ver docs/plan-multidominio.md, seccion 6."
+  ],
+  "tenants": [
+    {
+      "id": "the",
+      "label": "Cliente A",
+      "origins": ["https://the.documentosfirma.com"],
+      "emailToEnv": "TENANT_A_EMAIL_TO"
+    },
+    {
+      "id": "this",
+      "label": "Cliente B",
+      "origins": ["https://this.documentosfirma.com"],
+      "emailToEnv": "TENANT_B_EMAIL_TO"
+    },
+    {
+      "id": "local",
+      "label": "Desarrollo local",
+      "origins": [
+        "http://localhost:5500",
+        "http://127.0.0.1:5500",
+        "http://192.168.1.13:5500"
+      ],
+      "emailToEnv": "EMAIL_TO",
+      "dev": true
+    }
+  ]
+}
