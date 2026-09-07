@@ -50,6 +50,39 @@ function looksLikeEmail(value) {
   return /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(value);
 }
 
+// ✅ Lee una variable del entorno tolerando espacios en el NOMBRE.
+// El campo "Environment variable name" de la consola de App Runner acepta espacios
+// al pegar y no los muestra. Para Linux " X " y "X" son variables distintas, así que
+// la búsqueda exacta falla y el síntoma es indistinguible de una variable que nunca
+// se creó. Un nombre con espacios alrededor siempre es un error de dedo, nunca una
+// intención: lo aceptamos y avisamos, en vez de tumbar el servicio por eso.
+function leerVariable(envName, tenantId) {
+  if (Object.prototype.hasOwnProperty.call(process.env, envName)) {
+    return { value: (process.env[envName] || "").trim(), declarada: true };
+  }
+
+  const conEspacios = Object.keys(process.env).filter(k => k.trim() === envName);
+  if (conEspacios.length === 0) return { value: "", declarada: false };
+
+  // ❗️Dos nombres que solo difieren en espacios y con valores distintos: no adivinamos
+  // a cuál cliente le corresponde el correo.
+  const valores = new Set(conEspacios.map(k => (process.env[k] || "").trim()));
+  if (valores.size > 1) {
+    throw new Error(
+      `Tenant "${tenantId}": hay varias variables que se llaman ${envName} salvo por ` +
+      `espacios (${conEspacios.map(k => JSON.stringify(k)).join(", ")}) y con valores ` +
+      `distintos. Deja solo una, con el nombre exacto.`
+    );
+  }
+
+  console.warn(
+    `⚠️  La variable ${envName} llegó con espacios en el nombre ` +
+    `(${conEspacios.map(k => JSON.stringify(k)).join(", ")}). Se usa igual, pero ` +
+    `corrígela en App Runner: reescribe el nombre a mano, sin pegarlo.`
+  );
+  return { value: (process.env[conEspacios[0]] || "").trim(), declarada: true };
+}
+
 // ✅ Resuelve el destino leyendo SIEMPRE de process.env.
 // En modo producción, si falta la variable no arrancamos (mejor un deploy fallido
 // que firmas al buzón equivocado). Solo en modo desarrollo caemos a EMAIL_TO con un
@@ -67,8 +100,8 @@ function resolveEmailTo(tenant) {
     throw new Error(`Tenant "${tenant.id}": "emailToEnv" inválido (${envName})`);
   }
 
-  const declarada = Object.prototype.hasOwnProperty.call(process.env, envName);
-  let value = (process.env[envName] || "").trim();
+  const { value: leido, declarada } = leerVariable(envName, tenant.id);
+  let value = leido;
 
   if (!value && isDev() && envName !== "EMAIL_TO") {
     value = (process.env.EMAIL_TO || "").trim();
