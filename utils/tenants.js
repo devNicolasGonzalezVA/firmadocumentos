@@ -153,6 +153,18 @@ function tenantEnvVarsPresentes() {
     .sort();
 }
 
+// ✅ Diagnóstico ancho. El filtro de arriba solo reconoce el nombre EXACTO, así que
+// "no llegó", "llegó con un typo" y "llegó con un espacio invisible en el nombre"
+// dan los tres el mismo "(NINGUNA)" y no se pueden distinguir.
+// Imprime NOMBRES, nunca valores, y entre comillas: así un espacio de más o un
+// carácter raro se ve a simple vista en el log.
+function candidatasDeCorreo() {
+  return Object.keys(process.env)
+    .filter(k => /MAIL|TENANT/i.test(k))
+    .sort()
+    .map(k => JSON.stringify(k));
+}
+
 // ✅ Se llama una sola vez, al arrancar, ANTES de abrir el puerto.
 export function initTenants() {
   try {
@@ -164,6 +176,10 @@ export function initTenants() {
     console.error("   NODE_ENV:", JSON.stringify(process.env.NODE_ENV ?? null), `-> modo ${currentMode()}`);
     console.error("   Variables TENANT_*_EMAIL_TO que ve el proceso:",
       presentes.length ? presentes.join(", ") : "(NINGUNA)");
+    console.error("   Nombres que contienen MAIL o TENANT:",
+      candidatasDeCorreo().join(" ") || "(NINGUNO)");
+    console.error("   TODOS los nombres visibles:",
+      Object.keys(process.env).sort().join(" "));
     console.error("   EMAIL_TO definida:", process.env.EMAIL_TO ? "sí" : "no");
     console.error("   Total de variables de entorno visibles:", Object.keys(process.env).length);
     throw err; // ❗️seguimos sin arrancar: el diagnóstico no relaja el fail fast
